@@ -1,0 +1,75 @@
+import googlemaps
+from datetime import datetime
+from PyQt4.QtCore import QVariant
+from PyQt4.QtGui import QFileDialog
+import csv
+
+
+pathuser = str(QFileDialog.getExistingDirectory(None, "Select Directory"))
+filter = "csv(*.csv)"
+path = pathuser
+od = QFileDialog.getOpenFileName(None, "Selectionner le fichier O/D", path, filter)
+now = datetime.now()
+gmaps = googlemaps.Client(key="AIzaSyAV4YAO5_NKFSGvz6b79jKRSFfF6im9l7o")
+
+with open(od) as csvfile:
+        sources=csv.reader(csvfile, delimiter=';')
+        table = []
+        next(sources)
+        for row in sources:
+            s_id = row[0]
+            s_olat = row[1]
+            s_olng = row[2]
+            s_dlat = row[3]
+            s_dlng = row[4]
+            o_ori = str(s_olat+','+s_olng)
+            o_dest = str(s_dlat+','+s_dlng)
+            directions_result = gmaps.directions(o_ori, o_dest,mode="driving",departure_time=now)
+            point_str = directions_result[0]["overview_polyline"]["points"]
+            coord_chunks = [[]]
+            for char in point_str:
+                value = ord(char) - 63
+                split_after = not (value & 0x20)
+                value &= 0x1F
+                coord_chunks[-1].append(value)
+                if split_after:
+                    coord_chunks.append([])
+
+            del coord_chunks[-1]
+            coords = []
+            for coord_chunk in coord_chunks:
+                coord = 0
+                for i, chunk in enumerate(coord_chunk):
+                    coord |= chunk << (i * 5)
+                if coord & 0x1:
+                    coord = ~coord #invert
+                coord >>= 1
+                coord /= 100000.0
+                coords.append(coord)
+
+            points = []
+            prev_x = 0
+            prev_y = 0
+            for i in xrange(0, len(coords) - 1, 2):
+                if coords[i] == 0 and coords[i + 1] == 0:
+                    continue
+                prev_x += coords[i + 1]
+                prev_y += coords[i]
+                points.append((round(prev_x, 6), round(prev_y, 6)))
+
+            print (points)
+            layer = QgsVectorLayer('LineString', 'route', "memory") 
+            pr = layer.dataProvider() 
+            pr.addAttributes([QgsField("ID", QVariant.String)])
+            layer.updateFields()
+            fet = QgsFeature() 
+            seg=[]
+            for i in range(0,len(points)): 
+                seg.append(QgsPoint(points[i][0],points[i][1])) 
+
+            fet.setGeometry(QgsGeometry.fromPolyline(seg)) 
+            fet.setAttributes([s_id])
+            pr.addFeatures([fet])
+            layer.updateExtents() #update it 
+            QgsMapLayerRegistry.instance().addMapLayer(layer)
+        
